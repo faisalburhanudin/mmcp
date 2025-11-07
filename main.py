@@ -25,9 +25,31 @@ def list_tools(host, port):
 @click.option("--port", default=23456, help="MCP server port")
 @click.option("--tool", default="amazon_get_purchase_history", help="Tool name to call")
 @click.option("--params", default="{}", help="JSON string of tool parameters")
-def call(host, port, tool, params):
+@click.option(
+    "--property",
+    "-p",
+    "properties",
+    multiple=True,
+    help="Tool property in key=value form (can repeat)",
+)
+def call(host, port, tool, params, properties):
     """Call a tool on the MCP server."""
-    asyncio.run(call_tool(host, port, tool, params))
+    property_overrides = {}
+    for item in properties:
+        if "=" not in item:
+            raise click.ClickException(
+                f"Invalid --property '{item}'. Use key=value syntax."
+            )
+        key, value = item.split("=", 1)
+        if not key:
+            raise click.ClickException("Property key cannot be empty.")
+        try:
+            parsed_value = json.loads(value)
+        except json.JSONDecodeError:
+            parsed_value = value
+        property_overrides[key] = parsed_value
+
+    asyncio.run(call_tool(host, port, tool, params, property_overrides))
 
 
 async def fetch_tools(host, port):
@@ -56,12 +78,22 @@ async def fetch_tools(host, port):
         click.echo(traceback.format_exc(), err=True)
 
 
-async def call_tool(host, port, tool, params_str):
+async def call_tool(host, port, tool, params_str, property_overrides):
     """Connect to MCP server and call a tool."""
     try:
-        # Parse parameters
         params = json.loads(params_str)
+    except json.JSONDecodeError as e:
+        click.echo(f"Error: Invalid JSON in params: {e}", err=True)
+        return
 
+    if not isinstance(params, dict):
+        click.echo("Error: --params must be a JSON object.", err=True)
+        return
+
+    if property_overrides:
+        params.update(property_overrides)
+
+    try:
         # Construct server URL
         url = f"http://{host}:{port}/mcp-shopping"
 
@@ -77,8 +109,6 @@ async def call_tool(host, port, tool, params_str):
                 # Display result
                 click.echo(json.dumps(result.model_dump(), indent=2))
 
-    except json.JSONDecodeError as e:
-        click.echo(f"Error: Invalid JSON in params: {e}", err=True)
     except Exception as e:
         import traceback
 
